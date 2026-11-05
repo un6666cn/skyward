@@ -51,9 +51,15 @@ pub struct Encryption {
 }
 
 impl Encryption {
-    /// Read what an entry of the phone's own table says.
+    /// Read what an entry of the phone's own table says. A table may name
+    /// no metadata encryption and say only the `wrappedkey` flag, as
+    /// Meizu's does: the cipher is then Android's default, aes-256-xts,
+    /// and the flag says what `:wrappedkey_v0` would have.
     pub fn of(entry: &Entry) -> Result<Encryption> {
-        let said = entry.extra("metadata_encryption").context("the phone says its data partition is not encrypted whole")?;
+        let said = entry
+            .extra("metadata_encryption")
+            .or_else(|| entry.extras.iter().any(|e| e == "wrappedkey").then_some("aes-256-xts:wrappedkey_v0"))
+            .context("the phone says its data partition is not encrypted whole")?;
         let (name, rest) = said.split_once(':').unwrap_or((said, ""));
         let cipher = CIPHERS
             .iter()
@@ -596,6 +602,15 @@ mod tests {
         assert_eq!(Encryption::of(&e).unwrap(), Encryption { cipher: "aes-xts-plain64".into(), wrapped: true });
         let plain = entry("metadata_encryption=adiantum");
         assert_eq!(Encryption::of(&plain).unwrap(), Encryption { cipher: "xchacha12,aes-adiantum-plain64".into(), wrapped: false });
+    }
+
+    #[test]
+    fn a_wrappedkey_flag_without_a_cipher_takes_the_default() {
+        let e = entry("fileencryption=ice,wrappedkey,keydirectory=/metadata/vold/metadata_encryption");
+        assert_eq!(Encryption::of(&e).unwrap(), Encryption { cipher: "aes-xts-plain64".into(), wrapped: true });
+        assert!(Encryption::of(&entry("fileencryption=ice")).is_err(), "without the flag a phone that names no metadata encryption stays unnamed");
+        let said = entry("metadata_encryption=adiantum,wrappedkey");
+        assert_eq!(Encryption::of(&said).unwrap(), Encryption { cipher: "xchacha12,aes-adiantum-plain64".into(), wrapped: false }, "a named cipher is taken over the flag");
     }
 
     #[test]

@@ -1,0 +1,151 @@
+# 魅族 20(m2381,SM8550)适配。
+#
+# 事实依据(2026-11-06,真机 Flyme 12.6.0.0A + slot a,KernelSU root 实测):
+# - 已装系统 /vendor/etc/fstab.qcom:persist(/mnt/vendor/persist,ext4)与
+#   modem(/vendor/firmware_mnt,vfat)条目齐全;userdata 行为标准写法
+#   metadata_encryption=aes-256-xts:wrappedkey_v0(recovery.fstab 的 ice,wrappedkey
+#   只是 recovery 模式简写);
+# - vendor 服务与凭证照抄 Flyme 的 /vendor/etc/init/*.rc:qseecomd root:root,drmrpc;
+#   keymint system:system,drmrpc;gatekeeper system:system(由
+#   vendor.gatekeeper.is_security_level_spu=0 启用,本机走普通版,SPU 变体不跑);
+#   boot@1.2 root:root,注册 android.hardware.boot@1.2::IBootControl/default;
+# - 运行中进程复核:user 分别为 root(qseecomd/boot)与 system(keymint/gatekeeper),
+#   其中 qseecomd 与 rc 一致为 root;本机无 plain weaver 二进制(仅 -spu 变体),
+#   解密不依赖 weaver(TWRP 无 weaver 亦解密成功);
+# - 触摸 Goodix:goodix_ts.ko(vendor_dlkm),输入设备 main_touch(goodix_ts/input0),
+#   固件 /vendor/firmware/goodix_firmware.bin 与 goodix_cfg_group.bin,recovery 的
+#   ueventd 固件目录含 /vendor/firmware/,挂载后自动可达;
+# - WLAN:qca_cld3_kiwi_v2.ko + cnss2 套件(vendor_dlkm),配置
+#   /vendor/etc/wifi/kiwi_v2/WCNSS_qcom_cfg.ini,supplicant fragment 与
+#   android.hardware.boot@1.2.xml 均在 /vendor/etc/vintf/manifest/;
+# - 振动 AW8697 仅暴露 LED 类 /sys/class/leds/aw_vibrator,无 FF 输入设备,
+#   Skyward 经力反馈事件发声的机制驱动不了它(TWRP 振动同样不可用),故不配置。
+
+[device]
+codename = "m2381"
+brand = "Meizu"
+model = "Meizu 20"
+ab = true
+soc = { hans = "第二代骁龙®8移动平台", hant = "Snapdragon® 8 Gen 2 行動平台", en = "Snapdragon® 8 Gen 2 Mobile Platform" }
+# stock recovery 的 prop.default 实证:ro.build.display.id=Flyme 12.6.0.0A
+os_version_prop = "ro.build.display.id"
+
+[display]
+width = 1080
+height = 2400
+# 真机 ro.sf.lcd_density=450
+density = 450
+diagonal = 6.36
+# TODO(真机):页面滑动圆角半径,真机测量后填入
+
+[modules]
+# vendor_dlkm 与 /vendor/lib/modules 承载全部厂商模块;system_dlkm 分区只有
+# etc/ 没有模块,rfkill 为内核内建,不列为来源。
+sources = ["vendor_boot", "vendor_dlkm", "vendor"]
+# 触摸:Goodix。依赖由 modules.dep 带出。
+load = ["goodix_ts"]
+
+# modem 分区供 QSEE 读取 TA(/vendor/firmware_mnt),解密链路必需;
+# persist 供 TEE 存放文件,两者均按已装系统的 fstab.qcom 挂载,条目已实证存在。
+[firmware]
+partition = "modem"
+
+[partitions]
+mounted = ["persist"]
+
+# 以下服务的 user/groups 照抄 Flyme 的 vendor init rc,顺序即拉起顺序:
+# TEE 监听器就绪后密钥服务才能注册,再起 HIDL 目录与两个旧式服务。
+
+# TEE 监听器:让安全世界能回到 Android 侧,KeyMint 用密钥的前提。
+[[service]]
+path = "/vendor/bin/qseecomd"
+libraries = ["/system/lib64", "/vendor/lib64"]
+ready_property = "vendor.sys.listeners.registered"
+user = "root"
+groups = ["root", "drmrpc"]
+
+# 密钥服务(QTI AIDL)。其 VINTF fragment 同时描述 secureclock 与 sharedsecret
+# (持久化凭据备注协商的前提),fragment 复制后 IRemotelyProvisionedComponent 一并生效。
+[[service]]
+path = "/vendor/bin/hw/android.hardware.security.keymint-service-qti"
+libraries = ["/system/lib64", "/vendor/lib64"]
+ready_service = "android.hardware.security.keymint.IKeyMintDevice/default"
+registers = [
+    "android.hardware.security.secureclock.ISecureClock/default",
+    "android.hardware.security.sharedsecret.ISharedSecret/default",
+]
+user = "system"
+groups = ["system", "drmrpc"]
+
+# gatekeeper@1.0 是 HIDL 服务,需要已装系统的 hwservicemanager
+# (真机确认位于 system_ext;Skyward 把 system 挂在 /mnt/system 下)。
+[[service]]
+path = "/mnt/system_ext/bin/hwservicemanager"
+libraries = ["/mnt/system/system/lib64/bootstrap", "/mnt/system/system/lib64", "/mnt/system_ext/lib64"]
+ready_property = "hwservicemanager.ready"
+user = "system"
+groups = ["system"]
+
+# 凭证服务:校验锁屏口令,并给 KeyMint 发放使用受锁屏保护的密钥所需的备注。
+[[service]]
+path = "/vendor/bin/hw/android.hardware.gatekeeper@1.0-service-qti"
+libraries = ["/system/lib64", "/vendor/lib64"]
+ready_hardware_service = "android.hardware.gatekeeper@1.0::IGatekeeper/default"
+user = "system"
+groups = ["system"]
+
+# 槽位控制:真机 vendor 里存在 android.hardware.boot@1.2-service(TWRP 设备树
+# 自建服务是误判,其抄的 manifest.xml 是不完整的旧版;fragment 目录里有
+# android.hardware.boot@1.2.xml)。它与 ishtar 的同名同版。
+[[service]]
+path = "/vendor/bin/hw/android.hardware.boot@1.2-service"
+libraries = ["/system/lib64", "/vendor/lib64"]
+ready_hardware_service = "android.hardware.boot@1.2::IBootControl/default"
+user = "root"
+groups = ["root"]
+
+# WLAN:kiwi_v2(WCN7850)over cnss2,与 ishtar 同构。supplicant fragment 在
+# vendor 的 VINTF 目录,Skyward 会照就绪名单复制。
+# wlan_mac.bin:vendor 里的链接 /vendor/firmware/wlan/qca_cld/kiwi_v2/wlan_mac.bin
+# 指向 /mnt/vendor/persist/kiwi_v2/wlan_mac.bin,后者在本机不存在(悬空链接),
+# MAC 由驱动另行提供,故不写 mac 条目;实测 WLAN 拿到地址后如需再补。
+[wlan]
+modules = ["qca_cld3_kiwi_v2"]
+writes = [{ path = "/sys/kernel/cnss/fs_ready", value = "1" }]
+firmware = [
+    { name = "wlan/qca_cld/kiwi_v2/WCNSS_qcom_cfg.ini", path = "/vendor/etc/wifi/kiwi_v2/WCNSS_qcom_cfg.ini" },
+]
+interface = "wlan0"
+supplicant = "/vendor/bin/hw/wpa_supplicant"
+libraries = ["/system/lib64", "/vendor/lib64"]
+service = "android.hardware.wifi.supplicant.ISupplicant/default"
+# 联网探测地址暂用小米的 204 端点(对任何 ROM 均可用);Flyme 自家的探测地址
+# 待真机抓包确认后替换。
+probe = "http://connect.rom.miui.com/generate_204"
+
+# 高通平台通用 EFS。指纹为高通超声波方案(qfp-daemon),其模板目录待确认后补充;
+# secure_element 目录为 TEE 侧保管的 SE 状态,旧副本写回会打不开,一并跳过。
+[backup]
+efs = ["modemst1", "modemst2", "fsg", "fsc", "persist"]
+data_skipped = ["vendor/tzstorage", "vendor/qtee", "vendor/secure_element"]
+
+# 真机 /data/vendor 下的日志与转储目录。
+[wipe]
+logs = [
+    "/data/vendor/log",
+    "/data/vendor/imslogs",
+    "/data/vendor/pddump",
+    "/data/vendor/qti-logkit",
+    "/data/vendor/ramdump",
+    "/data/vendor/ssrdump",
+    "/data/vendor/tombstones",
+]
+
+# 说明:
+# - [stock] 留空:打包用真机 dd 出的 recovery 分区镜像(work/stock/recovery.img,
+#   Flyme 12.6.0.0A,整分区含 AVB footer)直接作 --stock 输入;
+# - [update] 留空:在线更新为 MIUI 私有接口,初期不做;
+# - [logd] 不需要:stock recovery 的 init.rc 没有 logd 服务;
+# - [touch] 与 [[owners]] 不需要:goodix_ts 直接报点,TWRP 亦未做任何触摸写入或
+#   设备节点移交;
+# - [haptics] 不配置:见文件头注;若日后要驱动 AW8697,需给其 LED 类接口另写路径。

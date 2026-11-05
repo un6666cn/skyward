@@ -861,6 +861,45 @@ mod tests {
     }
 
     #[test]
+    fn parses_m2381() {
+        let cfg = DeviceConfig::parse(include_str!("../../../devices/m2381.toml")).unwrap();
+        assert_eq!(cfg.device.codename, "m2381");
+        assert_eq!(cfg.device.os_version_prop, "ro.build.display.id");
+        assert_eq!((cfg.display.width, cfg.display.height, cfg.display.density), (1080, 2400, 450));
+        assert_eq!(cfg.modules.load, ["goodix_ts"]);
+        assert!(!cfg.modules.sources.iter().any(|s| s == "system_dlkm"), "the phone's system_dlkm carries no modules");
+        assert_eq!(cfg.firmware, Some(FirmwarePartition { partition: "modem".into() }), "the key service reads its apps from the modem partition");
+        assert_eq!(cfg.partitions.mounted, ["persist"], "the secure world keeps its files there");
+        let paths: Vec<&str> = cfg.services.iter().map(|s| s.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "/vendor/bin/qseecomd",
+                "/vendor/bin/hw/android.hardware.security.keymint-service-qti",
+                "/mnt/system_ext/bin/hwservicemanager",
+                "/vendor/bin/hw/android.hardware.gatekeeper@1.0-service-qti",
+                "/vendor/bin/hw/android.hardware.boot@1.2-service",
+            ]
+        );
+        assert_eq!(cfg.services[0].ready_property.as_deref(), Some("vendor.sys.listeners.registered"));
+        assert_eq!(
+            cfg.services[1].ready_service.as_deref(),
+            Some("android.hardware.security.keymint.IKeyMintDevice/default")
+        );
+        assert_eq!(cfg.services[2].ready_property.as_deref(), Some("hwservicemanager.ready"));
+        assert_eq!(
+            cfg.services[3].ready_hardware_service.as_deref(),
+            Some("android.hardware.gatekeeper@1.0::IGatekeeper/default")
+        );
+        assert_eq!(cfg.services[4].ready_hardware_service.as_deref(), Some("android.hardware.boot@1.2::IBootControl/default"));
+        let wlan = cfg.wlan.expect("the WLAN is described");
+        assert_eq!(wlan.modules, ["qca_cld3_kiwi_v2"]);
+        assert_eq!(wlan.firmware.len(), 1, "the MAC link into persist hangs on this phone, so only the settings are mapped");
+        assert_eq!(cfg.haptics, None, "the motor exposes no force-feedback device");
+        assert_eq!(cfg.stock, None, "the recovery is packed on a partition the phone itself holds");
+    }
+
+    #[test]
     fn parses_ishtar() {
         let cfg = DeviceConfig::parse(include_str!("../../../devices/ishtar.toml")).unwrap();
         assert_eq!(cfg.device.codename, "ishtar");

@@ -156,13 +156,15 @@ fn normal_max(max: u32) -> Result<u32> {
         let cell: [u8; 4] = bytes.as_slice().try_into().map_err(|_| anyhow!("{} is not one cell", path.display()))?;
         Ok(u32::from_be_bytes(cell))
     };
-    let (normal, full) = NORMAL_MAX
-        .iter()
-        .find(|(normal, _)| node.join(normal).exists())
-        .with_context(|| format!("panel {name} gives its normal maximum as none of {NORMAL_MAX:?}"))?;
-    let (normal, full) = (cell(normal)?, cell(full)?);
-    ensure!(normal > 0 && normal <= full, "panel {name}: normal maximum {normal} out of {full}");
-    Ok((f64::from(max) * f64::from(normal) / f64::from(full)).round() as u32)
+    // A panel that names none of these, as Meizu's does not, keeps no
+    // separate high brightness mode: the whole range is its own.
+    if let Some((normal, full)) = NORMAL_MAX.iter().find(|(normal, _)| node.join(normal).exists()) {
+        let (normal, full) = (cell(normal)?, cell(full)?);
+        ensure!(normal > 0 && normal <= full, "panel {name}: normal maximum {normal} out of {full}");
+        Ok((f64::from(max) * f64::from(normal) / f64::from(full)).round() as u32)
+    } else {
+        Ok(max)
+    }
 }
 
 /// Leave recovery for the chosen target.
