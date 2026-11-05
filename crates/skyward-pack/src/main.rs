@@ -136,7 +136,12 @@ fn main() -> Result<()> {
                 .with_context(|| format!("{} is not in the ramdisk", paths::PROP_DEFAULT))?
                 .data;
             let mut props = without(stock_props, &BUILD_VERSION);
-            props.extend_from_slice(b"\nro.secure=0\nro.adb.secure=0\nro.debuggable=1\nro.ota.allow_downgrade=true\n");
+            // sys.usb.config_disable carries no value in a stock recovery's
+            // property file, where init reads an unset property as none, and
+            // the file transfer's rules ask it for 0. Stock init stops adbd
+            // going to "none", and without this adbd is never started again
+            // for "mtp,adb", whose ready function then never binds.
+            props.extend_from_slice(b"\nro.secure=0\nro.adb.secure=0\nro.debuggable=1\nro.ota.allow_downgrade=true\nsys.usb.config_disable=0\n");
             rd.replace(paths::PROP_DEFAULT, props)?;
             img.ramdisk = rd.encode()?;
             let bytes = img.to_bytes()?;
