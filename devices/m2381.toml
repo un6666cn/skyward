@@ -56,6 +56,17 @@ mounted = ["persist"]
 # 以下服务的 user/groups 照抄 Flyme 的 vendor init rc,顺序即拉起顺序:
 # TEE 监听器就绪后密钥服务才能注册,再起 HIDL 目录与两个旧式服务。
 
+# ADSP 不自动启动(魅族的设备树没有 auto-boot),而电池计的固件跑在 ADSP 上:
+# qti_battery_charger 在开机时已加载,ADSP 不起它就不注册 battery 电源供应。
+# 按固件名定位 remoteproc,免得探针顺序变化影响编号。
+[[service]]
+path = "/vendor/bin/sh"
+args = ["-c", "for d in /sys/class/remoteproc/remoteproc*; do [ \"$(cat $d/firmware)\" = \"adsp.mdt\" ] && echo start > $d/state 2>/dev/null; done; true"]
+libraries = ["/system/lib64", "/vendor/lib64"]
+oneshot = true
+user = "root"
+groups = ["root"]
+
 # TEE 监听器:让安全世界能回到 Android 侧,KeyMint 用密钥的前提。
 [[service]]
 path = "/vendor/bin/qseecomd"
